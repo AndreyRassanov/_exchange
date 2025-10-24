@@ -1,0 +1,357 @@
+import React, { useRef, useEffect, useState, useCallback } from 'react';
+
+interface GammaLogProps {
+  depthData: number[];
+  gammaData: number[];
+  width?: number;
+  height?: number;
+  margin?: {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+  };
+  lineColor?: string;
+  fillColor?: string;
+  gridColor?: string;
+  backgroundColor?: string;
+}
+
+const GammaLog: React.FC<GammaLogProps> = ({
+  depthData,
+  gammaData,
+  width = 600,
+  height = 800,
+  margin = { top: 40, right: 80, bottom: 60, left: 100 },
+  lineColor = '#0066cc',
+  fillColor = '#0066cc33',
+  gridColor = '#e0e0e0',
+  backgroundColor = '#f8f8f8'
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [hoveredPoint, setHoveredPoint] = useState<number | null>(null);
+
+  // Вычисляем границы данных
+  const calculateScales = useCallback(() => {
+    const minDepth = Math.min(...depthData);
+    const maxDepth = Math.max(...depthData);
+    const minGamma = 0;
+    const maxGamma = Math.ceil(Math.max(...gammaData) / 10) * 10; // Округляем до ближайших 10
+
+    const scaleX = (width - margin.left - margin.right) / (maxGamma - minGamma || 1);
+    const scaleY = (height - margin.top - margin.bottom) / (maxDepth - minDepth || 1);
+
+    return {
+      minDepth,
+      maxDepth,
+      minGamma,
+      maxGamma,
+      scaleX,
+      scaleY
+    };
+  }, [depthData, gammaData, width, height, margin]);
+
+  // Функции преобразования координат
+  const getCoordinateConverters = useCallback((scales: ReturnType<typeof calculateScales>) => {
+    const { minDepth, minGamma, scaleX, scaleY } = scales;
+    
+    return {
+      toCanvasX: (gamma: number) => margin.left + (gamma - minGamma) * scaleX,
+      toCanvasY: (depth: number) => margin.top + (depth - minDepth) * scaleY
+    };
+  }, [margin]);
+
+  // Отрисовка графика
+  const drawGraph = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Очистка canvas
+    ctx.clearRect(0, 0, width, height);
+
+    // Фон
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(0, 0, width, height);
+
+    const scales = calculateScales();
+    const { toCanvasX, toCanvasY } = getCoordinateConverters(scales);
+
+    // Сетка по гамме (вертикальные линии) - шаг 10 API
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = 0.5;
+    ctx.font = '11px Arial';
+    ctx.fillStyle = '#666';
+
+    for (let gamma = 0; gamma <= scales.maxGamma; gamma += 10) {
+      const canvasX = toCanvasX(gamma);
+      
+      // Линия сетки
+      ctx.beginPath();
+      ctx.moveTo(canvasX, margin.top);
+      ctx.lineTo(canvasX, height - margin.bottom);
+      ctx.stroke();
+
+      // Подпись гаммы
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`${gamma}`, canvasX, height - margin.bottom + 5);
+    }
+
+    // Сетка по глубине (горизонтальные линии) - шаг 1 метр
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.font = '10px Arial';
+
+    // Только каждую 10-ю линию делаем толще и с подписью
+    for (let depth = Math.ceil(scales.minDepth); depth <= scales.maxDepth; depth += 1) {
+      const canvasY = toCanvasY(depth);
+      
+      // Для каждых 10 метров - толстая линия, для остальных - тонкая
+      if (depth % 10 === 0) {
+        ctx.strokeStyle = '#cccccc';
+        ctx.lineWidth = 1;
+        // Подпись для каждых 10 метров
+        ctx.fillText(`${depth}`, margin.left - 5, canvasY);
+      } else {
+        ctx.strokeStyle = '#f0f0f0';
+        ctx.lineWidth = 0.5;
+      }
+      
+      // Линия сетки
+      ctx.beginPath();
+      ctx.moveTo(margin.left, canvasY);
+      ctx.lineTo(width - margin.right, canvasY);
+      ctx.stroke();
+    }
+
+    // Ось X (Гамма)
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(margin.left, height - margin.bottom);
+    ctx.lineTo(width - margin.right, height - margin.bottom);
+    ctx.stroke();
+
+    // Ось Y (Глубина)
+    ctx.beginPath();
+    ctx.moveTo(margin.left, margin.top);
+    ctx.lineTo(margin.left, height - margin.bottom);
+    ctx.stroke();
+
+    // Заголовок оси X (Гамма)
+    ctx.textAlign = 'center';
+    ctx.font = '14px Arial';
+    ctx.fillStyle = '#000';
+    ctx.fillText('Общая гамма, API', width / 2, height - 25);
+
+    // Заголовок оси Y (Глубина)
+    ctx.save();
+    ctx.translate(30, height / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.fillText('Глубина, м', 0, 0);
+    ctx.restore();
+
+    // Рисуем заполненную область
+    ctx.fillStyle = fillColor;
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 2;
+
+    ctx.beginPath();
+    
+    // Начинаем с базовой линии (гамма = 0)
+    ctx.moveTo(toCanvasX(0), toCanvasY(depthData[0]));
+    
+    // Рисуем линию графика
+    for (let i = 0; i < depthData.length; i++) {
+      const canvasX = toCanvasX(gammaData[i]);
+      const canvasY = toCanvasY(depthData[i]);
+      
+      ctx.lineTo(canvasX, canvasY);
+    }
+    
+    // Замыкаем область до базовой линии
+    ctx.lineTo(toCanvasX(0), toCanvasY(depthData[depthData.length - 1]));
+    
+    ctx.closePath();
+    ctx.fill();
+
+    // Рисуем линию поверх
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    
+    for (let i = 0; i < depthData.length; i++) {
+      const canvasX = toCanvasX(gammaData[i]);
+      const canvasY = toCanvasY(depthData[i]);
+      
+      if (i === 0) {
+        ctx.moveTo(canvasX, canvasY);
+      } else {
+        ctx.lineTo(canvasX, canvasY);
+      }
+    }
+    
+    ctx.stroke();
+
+    // Базовая линия (гамма = 0)
+    ctx.strokeStyle = '#666';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    ctx.moveTo(toCanvasX(0), toCanvasY(scales.minDepth));
+    ctx.lineTo(toCanvasX(0), toCanvasY(scales.maxDepth));
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Подсветка точки при наведении
+    if (hoveredPoint !== null && hoveredPoint >= 0 && hoveredPoint < depthData.length) {
+      const canvasY = toCanvasY(depthData[hoveredPoint]);
+      const canvasX = toCanvasX(gammaData[hoveredPoint]);
+      
+      // Точка
+      ctx.fillStyle = '#ff0000';
+      ctx.beginPath();
+      ctx.arc(canvasX, canvasY, 3, 0, 2 * Math.PI);
+      ctx.fill();
+      
+      // Информация
+      ctx.fillStyle = '#000';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'left';
+      ctx.fillText(
+        `Глубина: ${depthData[hoveredPoint]} м, Гамма: ${gammaData[hoveredPoint].toFixed(1)} API`,
+        canvasX + 8,
+        canvasY - 8
+      );
+    }
+  }, [depthData, gammaData, width, height, margin, lineColor, fillColor, gridColor, backgroundColor, hoveredPoint, calculateScales, getCoordinateConverters]);
+
+  // Обработчик мыши
+  const handleMouseMove = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+
+    const scales = calculateScales();
+    const { toCanvasY } = getCoordinateConverters(scales);
+
+    // Находим ближайшую точку по глубине
+    let closestIndex = -1;
+    let minDistance = Infinity;
+
+    for (let i = 0; i < depthData.length; i++) {
+      const canvasY = toCanvasY(depthData[i]);
+      const distance = Math.abs(mouseY - canvasY);
+
+      if (distance < 3 && distance < minDistance) {
+        minDistance = distance;
+        closestIndex = i;
+      }
+    }
+
+    setHoveredPoint(closestIndex);
+  }, [depthData, calculateScales, getCoordinateConverters]);
+
+  const handleMouseLeave = useCallback(() => {
+    setHoveredPoint(null);
+  }, []);
+
+  useEffect(() => {
+    drawGraph();
+  }, [drawGraph]);
+
+  // Проверка данных после хуков
+  if (depthData.length !== gammaData.length || depthData.length === 0) {
+    return <div>Ошибка: массивы глубины и гаммы должны быть одинаковой длины и не пустыми</div>;
+  }
+
+  return (
+    <div style={{ border: '1px solid #ccc', padding: '10px', display: 'inline-block', backgroundColor: '#f8f8f8' }}>
+      <canvas
+        ref={canvasRef}
+        width={width}
+        height={height}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+        style={{ cursor: 'crosshair', display: 'block' }}
+      />
+    </div>
+  );
+};
+
+// Пример использования
+const App: React.FC = () => {
+  // Генерация тестовых данных с шагом 1 метр по глубине
+  const generateLogData = () => {
+    const depthData: number[] = [];
+    const gammaData: number[] = [];
+    
+    for (let depth = 20; depth <= 200; depth += 1) {
+      depthData.push(depth);
+      
+      // Базовый уровень гаммы
+      let gamma = 30 + Math.random() * 20;
+      
+      // Добавляем аномалии как в реальном каротаже
+      if (depth >= 85 && depth <= 95) {
+        gamma = 80 + Math.random() * 40; // Высокая гамма
+      } else if (depth >= 120 && depth <= 135) {
+        gamma = 90 + Math.random() * 50; // Очень высокая гамма
+      } else if (depth >= 150 && depth <= 165) {
+        gamma = 70 + Math.random() * 30; // Средняя аномалия
+      } else if (depth >= 180 && depth <= 190) {
+        gamma = 100 + Math.random() * 60; // Максимальная аномалия
+      }
+      
+      gammaData.push(Math.max(0, gamma));
+    }
+    
+    return { depthData, gammaData };
+  };
+
+  const { depthData, gammaData } = generateLogData();
+
+  return (
+    <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
+      <h2>Гамма-каротаж</h2>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '20px' }}>
+        <GammaLog
+          depthData={depthData}
+          gammaData={gammaData}
+          width={500}
+          height={700}
+        />
+        
+        {/* Легенда */}
+        <div style={{ minWidth: '200px', fontSize: '14px' }}>
+          <h3>Параметры:</h3>
+          <div style={{ marginBottom: '10px' }}>
+            <strong>Диапазон глубины:</strong><br />
+            {Math.min(...depthData)} - {Math.max(...depthData)} м
+          </div>
+          <div style={{ marginBottom: '10px' }}>
+            <strong>Гамма-излучение:</strong><br />
+            0 - {Math.ceil(Math.max(...gammaData) / 10) * 10} API
+          </div>
+          <div style={{ marginBottom: '10px' }}>
+            <strong>Шаг сетки:</strong><br />
+            Глубина: 1 м<br />
+            Гамма: 10 API
+          </div>
+          <div>
+            <strong>Точек данных:</strong> {depthData.length}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;
